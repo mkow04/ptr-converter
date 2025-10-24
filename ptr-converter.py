@@ -8,6 +8,7 @@ __author__ = "mkow04"
 __email__ = "maciejkowalski04@proton.me"
 
 import sys
+import ipaddress
 from colorclasses import Color, Effect
 
 
@@ -39,21 +40,57 @@ def zone_deduper(zone: list) -> list:
     return [[i[3], i[0]] for i in a_deduped]
 
 
-def make_ipv4_ptr(ipv4_list: list, domain: str) -> list:
+def make_ipv4_ptr(ipv4_list: list, domain: str, prefix: int = 24) -> list:
     """
-    Function making a PTR like dictionary of tuples with entries like this: ("ptr zone", ("3rd octet", "fqdn"))
+    IPv4: Function making a PTR-like dictionary of tuples with entries like this: ("ptr zone", ("host", "fqdn"))
     """
     result = {}
 
     for ip, hostname in ipv4_list:
         octets = ip.split('.')
-        zone = ".".join([octets[2], octets[1], octets[0]]) + ".in-addr.arpa"
 
-        key = octets[3]
+        if prefix >= 32:
+            np = 3
+        else:
+            np = prefix//8
+
+        hp = 4 - np
+
+        zone = ".".join(octets[:np][::-1] + ["in-addr.arpa"])
+
+        host = ".".join(octets[-hp:][::-1])
 
         fqdn = hostname + "." + domain + "."
 
-        result.setdefault(zone, {})[key] = fqdn
+        result.setdefault(zone, {})[host] = fqdn
+
+    return result
+
+
+def make_ipv6_ptr(ipv6_list: list, domain: str, prefix: int = 64) -> list:
+    """
+    IPv6: Function making a PTR-like dictionary of tuples with entries like this: ("ptr zone", ("host", "fqdn"))
+    """
+    result = {}
+
+    for ip, hostname in ipv6_list:
+        ipaddr: ipaddress.IPv6Address = ipaddress.ip_address(ip)
+        ptr = ipaddr.reverse_pointer.split(".")
+
+        if prefix >= 128:
+            np = 32
+        else:
+            np = prefix//4
+
+        hp = 32 - np
+
+        zone = ".".join(ptr[np:34])
+
+        host = ".".join(ptr[:hp])
+
+        fqdn = hostname + "." + domain + "."
+
+        result.setdefault(zone, {})[host] = fqdn
 
     return result
 
@@ -101,7 +138,11 @@ def main():
 
     # Make PTR records
 
-    a_ptr_list = make_ipv4_ptr(a_list, domain)
+    a_pref = int(input(f"\n\n{Color.GREEN}==> {Color.WHITE}Provide a prefix lenght for IPv4 zones: {Effect.RESET}\n"))
+    aaaa_pref = int(input(f"\n\n{Color.GREEN}==> {Color.WHITE}Provide a prefix lenght for IPv6 zones: {Effect.RESET}\n"))
+
+    a_ptr_list = make_ipv4_ptr(a_list, domain, a_pref)
+    aaaa_ptr_list = make_ipv6_ptr(aaaa_list, domain, aaaa_pref)
 
     # Give the result
 
@@ -116,11 +157,30 @@ def main():
             vv = v[vk]
             print(f"{vk}\tIN\tPTR\t{vv}")
 
+    # IPv6
+
+    print(f"\n\n{Color.YELLOW}==== {Color.WHITE}IPv6 Results:{Color.YELLOW} ===={Effect.RESET}\n")
+
+    for k in aaaa_ptr_list:
+        v = aaaa_ptr_list[k]
+        print(f"\n{Effect.BOLD}{k}{Effect.RESET}")
+        for vk in v:
+            vv = v[vk]
+            print(f"{vk}\tIN\tPTR\t{vv}")
+
     # Files for bind
 
     print(f"\n\n{Color.YELLOW}==== {Color.WHITE}Bind config:{Color.YELLOW} ===={Effect.RESET}\n")
 
     for k in a_ptr_list:
+        print(f"zone {k} IN {"{"}")
+        print("	type master;")
+        print(f"	file \"/etc/bind/master/{k}\";")
+        print("};")
+
+    print()
+
+    for k in aaaa_ptr_list:
         print(f"zone {k} IN {"{"}")
         print("	type master;")
         print(f"	file \"/etc/bind/master/{k}\";")
